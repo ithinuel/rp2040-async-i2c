@@ -1,0 +1,15 @@
+[package]
+name = "rp2040-async-i2c"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = [ "Wilfried Chauveau <wilfried.chauveau@ithinuel.me>" ]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = { version = "0.3.19", default-features = false, features = ["async-await"] }
+rp2040-hal = { git = "https://github.com/rp-rs/rp-hal", features = ["eh1_0_alpha"] }
+embedded-hal = { version = "=1.0.0-alpha.7" }
+embedded-hal-async = "0.0.1"
+embedded-time = "0.12.0"
