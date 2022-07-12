@@ -5,7 +5,7 @@
 use core::{future::Future, ops::Deref, task::Poll};
 
 use embedded_hal_async::i2c::Operation;
-use embedded_time::rate::Hertz;
+use fugit::HertzU32;
 use rp2040_hal::{
     gpio::{bank0::BankPinId, FunctionI2C, Pin, PinId},
     i2c::{Error, SclPin, SdaPin},
@@ -54,24 +54,21 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
     AsyncI2C<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
 {
     /// Configures the I2C peripheral to work in controller mode
-    pub fn new<F, SystemF>(
+    pub fn new(
         i2c: T,
         sda_pin: Pin<Sda, FunctionI2C>,
         scl_pin: Pin<Scl, FunctionI2C>,
-        freq: F,
+        freq: HertzU32,
         resets: &mut RESETS,
-        system_clock: SystemF,
+        system_clock: HertzU32,
     ) -> Self
     where
-        F: Into<Hertz<u64>>,
         Sda: SdaPin<T>,
         Scl: SclPin<T>,
-        SystemF: Into<Hertz<u32>>,
     {
-        let freq = freq.into().0;
+        let freq = freq.to_Hz();
         assert!(freq <= 1_000_000);
         assert!(freq > 0);
-        let freq = freq as u32;
 
         i2c.reset_bring_down(resets);
         i2c.reset_bring_up(resets);
@@ -91,7 +88,7 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
         i2c.ic_tx_tl.write(|w| unsafe { w.tx_tl().bits(0) });
         i2c.ic_rx_tl.write(|w| unsafe { w.rx_tl().bits(0) });
 
-        let freq_in = system_clock.into().0;
+        let freq_in = system_clock.to_Hz();
 
         // There are some subtleties to I2C timing which we are completely ignoring here
         // See: https://github.com/raspberrypi/pico-sdk/blob/bfcbefafc5d2a210551a4d9d80b4303d4ae0adf7/src/rp2_common/hardware_i2c/i2c.c#L69
