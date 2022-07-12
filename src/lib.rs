@@ -4,7 +4,7 @@
 
 use core::{future::Future, ops::Deref, task::Poll};
 
-use embedded_hal::i2c::blocking::Operation;
+use embedded_hal_async::i2c::Operation;
 use embedded_time::rate::Hertz;
 use rp2040_hal::{
     gpio::{bank0::BankPinId, FunctionI2C, Pin, PinId},
