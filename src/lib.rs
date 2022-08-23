@@ -44,6 +44,7 @@ const RX_FIFO_SIZE: u8 = 16;
 pub struct AsyncI2C<I2C, Pins> {
     i2c: I2C,
     pins: Pins,
+    waker_setter: Option<fn(core::task::Waker)>,
 }
 
 impl<T: Deref<Target = Block>, PINS> embedded_hal_async::i2c::ErrorType for AsyncI2C<T, PINS> {
@@ -143,6 +144,7 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
         Self {
             i2c,
             pins: (sda_pin, scl_pin),
+            waker_setter: None,
         }
     }
 }
@@ -162,6 +164,28 @@ where
 }
 
 impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
+    async fn block_on<F: FnMut(&mut Self) -> Poll<U>, U>(&mut self, mut f: F) -> U {
+        // if a waker is set enbale interrupt
+        futures::future::poll_fn(|cx| {
+            let r = f(self);
+
+            if r.is_pending() {
+                if let Some(waker_setter) = self.waker_setter {
+                    waker_setter(cx.waker().clone());
+                } else {
+                    // always ready to scan
+                    cx.waker().wake_by_ref();
+                }
+            }
+            r
+        })
+        .await
+    }
+
+    pub fn set_waker_setter(&mut self, waker_setter: fn(core::task::Waker)) {
+        self.waker_setter = Some(waker_setter);
+    }
+
     /// Number of bytes currently in the RX FIFO
     #[inline]
     pub fn rx_fifo_used(&self) -> u8 {
@@ -265,16 +289,21 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
                 });
                 queued += 1;
             }
-            match block_on(|| {
-                if let Some(abort_reason) = self.read_and_clear_abort_reason() {
-                    Poll::Ready(Err(abort_reason))
-                } else if self.i2c.ic_rxflr.read().bits() != 0 {
-                    Poll::Ready(Ok(()))
-                } else {
-                    Poll::Pending
-                }
-            })
-            .await
+
+            match self
+                .block_on(|me| {
+                    if let Some(abort_reason) = me.read_and_clear_abort_reason() {
+                        Poll::Ready(Err(abort_reason))
+                    } else if me.i2c.ic_rxflr.read().bits() != 0 {
+                        Poll::Ready(Ok(()))
+                    } else {
+                        me.i2c
+                            .ic_intr_mask
+                            .modify(|_, w| w.m_rx_full().disabled().m_tx_abrt().disabled());
+                        Poll::Pending
+                    }
+                })
+                .await
             {
                 Ok(_) => {}
                 Err(reason) => {
@@ -288,8 +317,11 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         }
 
         // wait for stop condition to be emitted.
-        block_on(|| {
-            if self.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+        self.block_on(|me| {
+            if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+                me.i2c
+                    .ic_intr_mask
+                    .modify(|_, w| w.m_rx_full().disabled().m_tx_abrt().disabled());
                 Poll::Pending
             } else {
                 Poll::Ready(())
@@ -314,16 +346,20 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         while let Some(byte) = bytes.next() {
             if self.tx_fifo_full() {
                 // wait a bit
-                match block_on(|| {
-                    if let Some(abort_reason) = self.read_and_clear_abort_reason() {
-                        Poll::Ready(Err(abort_reason))
-                    } else if !self.tx_fifo_full() {
-                        Poll::Ready(Ok(()))
-                    } else {
-                        Poll::Pending
-                    }
-                })
-                .await
+                match self
+                    .block_on(|me| {
+                        if let Some(abort_reason) = me.read_and_clear_abort_reason() {
+                            Poll::Ready(Err(abort_reason))
+                        } else if !me.tx_fifo_full() {
+                            Poll::Ready(Ok(()))
+                        } else {
+                            me.i2c
+                                .ic_intr_mask
+                                .modify(|_, w| w.m_tx_empty().disabled().m_tx_abrt().disabled());
+                            Poll::Pending
+                        }
+                    })
+                    .await
                 {
                     Ok(_) => {}
                     Err(reason) => {
@@ -346,8 +382,11 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         }
         if abort_reason.is_none() {
             // wait for the tx_fifo to be emptied
-            block_on(|| {
-                if self.i2c.ic_raw_intr_stat.read().tx_empty().is_inactive() {
+            self.block_on(|me| {
+                if me.i2c.ic_raw_intr_stat.read().tx_empty().is_inactive() {
+                    me.i2c
+                        .ic_intr_mask
+                        .modify(|_, w| w.m_tx_empty().disabled().m_tx_abrt().disabled());
                     Poll::Pending
                 } else {
                     Poll::Ready(())
@@ -361,8 +400,11 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         if abort_reason.is_some() || do_stop {
             // If the transaction was aborted or if it completed
             // successfully wait until the STOP condition has occured.
-            block_on(|| {
-                if self.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+            self.block_on(|me| {
+                if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+                    me.i2c
+                        .ic_intr_mask
+                        .modify(|_, w| w.m_tx_empty().disabled().m_tx_abrt().disabled());
                     Poll::Pending
                 } else {
                     Poll::Ready(())
@@ -402,16 +444,6 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         }
     }
 }
-async fn block_on<F: FnMut() -> Poll<T>, T>(mut f: F) -> T {
-    futures::future::poll_fn(|cx| {
-        // always ready to scan
-        cx.waker().wake_by_ref();
-
-        f()
-    })
-    .await
-}
-
 impl<T, PINS, A> embedded_hal_async::i2c::I2c<A> for AsyncI2C<T, PINS>
 where
     T: Deref<Target = Block>,
