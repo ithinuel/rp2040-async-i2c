@@ -9,7 +9,7 @@ authors = [ "Wilfried Chauveau <wilfried.chauveau@ithinuel.me>" ]
 
 [dependencies]
 futures = { version = "0.3.19", default-features = false, features = ["async-await"] }
-rp2040-hal = { version = "0.5.0", features = ["eh1_0_alpha"] }
+rp2040-hal = { version = "0.6.0", features = ["eh1_0_alpha"] }
 embedded-hal = { version = "=1.0.0-alpha.8" }
 embedded-hal-async = "0.1.0-alpha.1"
 fugit = "0.3.6"
