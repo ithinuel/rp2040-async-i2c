@@ -41,17 +41,22 @@ pub(crate) use sealed::SubSystemReset;
 const TX_FIFO_SIZE: u8 = 16;
 const RX_FIFO_SIZE: u8 = 16;
 
-pub struct AsyncI2C<I2C, Pins> {
+pub struct AsyncI2C<'a, I2C, Pins> {
     i2c: I2C,
     pins: Pins,
     waker_setter: Option<fn(core::task::Waker)>,
+    _clock: &'a rp2040_hal::clocks::SystemClock,
 }
 
-impl<T: Deref<Target = Block>, PINS> embedded_hal_async::i2c::ErrorType for AsyncI2C<T, PINS> {
+impl<T: Deref<Target = Block>, PINS> embedded_hal_async::i2c::ErrorType for AsyncI2C<'_, T, PINS> {
     type Error = Error;
 }
-impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: PinId + BankPinId>
-    AsyncI2C<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+impl<
+        'a,
+        T: SubSystemReset + Deref<Target = Block>,
+        Sda: PinId + BankPinId,
+        Scl: PinId + BankPinId,
+    > AsyncI2C<'a, T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
 {
     /// Configures the I2C peripheral to work in controller mode
     pub fn new(
@@ -60,7 +65,7 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
         scl_pin: Pin<Scl, FunctionI2C>,
         freq: HertzU32,
         resets: &mut RESETS,
-        system_clock: HertzU32,
+        system_clock: &'a rp2040_hal::clocks::SystemClock,
     ) -> Self
     where
         Sda: SdaPin<T>,
@@ -88,7 +93,8 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
         i2c.ic_tx_tl.write(|w| unsafe { w.tx_tl().bits(0) });
         i2c.ic_rx_tl.write(|w| unsafe { w.rx_tl().bits(0) });
 
-        let freq_in = system_clock.to_Hz();
+        use rp2040_hal::Clock;
+        let freq_in = system_clock.freq().to_Hz();
 
         // There are some subtleties to I2C timing which we are completely ignoring here
         // See: https://github.com/raspberrypi/pico-sdk/blob/bfcbefafc5d2a210551a4d9d80b4303d4ae0adf7/src/rp2_common/hardware_i2c/i2c.c#L69
@@ -142,10 +148,11 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
             i2c,
             pins: (sda_pin, scl_pin),
             waker_setter: None,
+            _clock: system_clock,
         }
     }
 }
-impl<T, Sda, Scl> AsyncI2C<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+impl<T, Sda, Scl> AsyncI2C<'_, T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
 where
     T: SubSystemReset + Deref<Target = Block>,
     Sda: PinId + BankPinId,
@@ -160,7 +167,7 @@ where
     }
 }
 
-impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
+impl<'clk, T: Deref<Target = Block>, PINS> AsyncI2C<'clk, T, PINS> {
     async fn block_on<F: FnMut(&mut Self) -> Poll<U>, U>(&mut self, mut f: F) -> U {
         // if a waker is set enbale interrupt
         futures::future::poll_fn(|cx| {
@@ -422,7 +429,7 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         Ok(())
     }
 
-    pub fn write_iter<'a, A, U>(
+    pub fn write_iter<'a: 'clk, A, U>(
         &'a mut self,
         address: A,
         bytes: U,
@@ -441,7 +448,7 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         }
     }
 }
-impl<T, PINS, A> embedded_hal_async::i2c::I2c<A> for AsyncI2C<T, PINS>
+impl<T, PINS, A> embedded_hal_async::i2c::I2c<A> for AsyncI2C<'_, T, PINS>
 where
     T: Deref<Target = Block>,
     A: embedded_hal_async::i2c::AddressMode + 'static + Into<u16>,
