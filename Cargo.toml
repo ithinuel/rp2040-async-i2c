@@ -3,17 +3,18 @@ name = "rp2040-async-i2c"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-authors = [ "Wilfried Chauveau <wilfried.chauveau@ithinuel.me>" ]
+authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-futures = { version = "0.3.19", default-features = false, features = ["async-await"] }
 rp2040-hal = { version = "0.6.0", features = ["eh1_0_alpha"] }
 embedded-hal = { version = "=1.0.0-alpha.8" }
 embedded-hal-async = "0.1.0-alpha.1"
 fugit = "0.3.6"
+pio = "0.2"
 
 [patch.crates-io]
 embedded-hal = { git = "https://github.com/rust-embedded/embedded-hal" }
 embedded-hal-async = { git = "https://github.com/rust-embedded/embedded-hal" }
+rp2040-hal = { git = "https://github.com/ithinuel/rp-hal", branch = "add-alternate-pio-methods" }

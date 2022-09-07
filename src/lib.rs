@@ -2,15 +2,21 @@
 #![feature(type_alias_impl_trait)]
 #![feature(generic_associated_types)]
 
-use core::{future::Future, ops::Deref, task::Poll};
+use core::{
+    future::{self, Future},
+    ops::Deref,
+    task::Poll,
+};
 
-use embedded_hal_async::i2c::Operation;
+use embedded_hal_async::i2c::{AddressMode, Operation};
 use fugit::HertzU32;
 use rp2040_hal::{
     gpio::{bank0::BankPinId, FunctionI2C, Pin, PinId},
     i2c::{Error, SclPin, SdaPin},
     pac::{self, i2c0::RegisterBlock as Block, RESETS},
 };
+
+pub mod pio;
 
 mod sealed {
     use rp2040_hal::pac;
@@ -41,17 +47,17 @@ pub(crate) use sealed::SubSystemReset;
 const TX_FIFO_SIZE: u8 = 16;
 const RX_FIFO_SIZE: u8 = 16;
 
-pub struct AsyncI2C<I2C, Pins> {
+pub struct I2c<I2C, Pins> {
     i2c: I2C,
     pins: Pins,
     waker_setter: Option<fn(core::task::Waker)>,
 }
 
-impl<T: Deref<Target = Block>, PINS> embedded_hal_async::i2c::ErrorType for AsyncI2C<T, PINS> {
+impl<T: Deref<Target = Block>, PINS> embedded_hal_async::i2c::ErrorType for I2c<T, PINS> {
     type Error = Error;
 }
 impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: PinId + BankPinId>
-    AsyncI2C<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+    I2c<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
 {
     /// Configures the I2C peripheral to work in controller mode
     pub fn new(
@@ -145,7 +151,7 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
         }
     }
 }
-impl<T, Sda, Scl> AsyncI2C<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+impl<T, Sda, Scl> I2c<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
 where
     T: SubSystemReset + Deref<Target = Block>,
     Sda: PinId + BankPinId,
@@ -160,10 +166,10 @@ where
     }
 }
 
-impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
+impl<T: Deref<Target = Block>, PINS> I2c<T, PINS> {
     async fn block_on<F: FnMut(&mut Self) -> Poll<U>, U>(&mut self, mut f: F) -> U {
         // if a waker is set enbale interrupt
-        futures::future::poll_fn(|cx| {
+        future::poll_fn(|cx| {
             let r = f(self);
 
             if r.is_pending() {
@@ -422,29 +428,23 @@ impl<T: Deref<Target = Block>, PINS> AsyncI2C<T, PINS> {
         Ok(())
     }
 
-    pub fn write_iter<'a, A, U>(
-        &'a mut self,
-        address: A,
-        bytes: U,
-    ) -> impl Future<Output = Result<(), Error>> + 'a
+    pub async fn write_iter<A, U>(&mut self, address: A, bytes: U) -> Result<(), Error>
     where
-        U: IntoIterator<Item = u8> + 'a,
-        A: embedded_hal_async::i2c::AddressMode + 'static + Into<u16>,
+        U: IntoIterator<Item = u8>,
+        A: AddressMode + 'static + Into<u16>,
     {
         let addr: u16 = address.into();
         let mut bytes = bytes.into_iter().peekable();
 
-        async move {
-            Self::validate(addr, Some(bytes.peek().is_none()), None)?;
-            self.setup(addr);
-            self.non_blocking_write_internal(bytes, true).await
-        }
+        Self::validate(addr, Some(bytes.peek().is_none()), None)?;
+        self.setup(addr);
+        self.non_blocking_write_internal(bytes, true).await
     }
 }
-impl<T, PINS, A> embedded_hal_async::i2c::I2c<A> for AsyncI2C<T, PINS>
+impl<T, PINS, A> embedded_hal_async::i2c::I2c<A> for I2c<T, PINS>
 where
     T: Deref<Target = Block>,
-    A: embedded_hal_async::i2c::AddressMode + 'static + Into<u16>,
+    A: AddressMode + 'static + Into<u16>,
 {
     type WriteFuture<'a>
     = impl Future<Output = Result<(), Error>> + 'a where
