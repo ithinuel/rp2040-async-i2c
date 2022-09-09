@@ -55,7 +55,7 @@ const INSTR_OFFSET: usize = 10;
 const DATA_OFFSET: usize = 1;
 
 /// Instance of I2C Controller.
-pub struct I2c<'pio, P, SMI, SDA, SCL>
+pub struct I2C<'pio, P, SMI, SDA, SCL>
 where
     P: PIOExt + FunctionConfig,
     SMI: StateMachineIndex,
@@ -72,7 +72,7 @@ where
     waker_setter: Option<fn(core::task::Waker)>,
 }
 
-impl<'pio, P, SMI, SDA, SCL> I2c<'pio, P, SMI, SDA, SCL>
+impl<'pio, P, SMI, SDA, SCL> I2C<'pio, P, SMI, SDA, SCL>
 where
     P: PIOExt + FunctionConfig,
     SMI: StateMachineIndex,
@@ -256,6 +256,13 @@ where
         }
     }
 
+    /// Sets the function pointer to be called to setup the waker context.
+    ///
+    /// Once set, the instance will rely on interrupts to wake. The interrup used is IRQ0 and the
+    /// flags are:
+    /// - `sm<SMI::id()>`
+    /// - rx FIFO not empty
+    /// - tx FIFO not full
     pub fn set_waker_setter(&mut self, waker_setter: fn(core::task::Waker)) {
         self.waker_setter = Some(waker_setter);
     }
@@ -499,6 +506,7 @@ where
         }
     }
 
+    /// Writes to the i2c bus consuming bytes for the given iterator.
     pub async fn write_iter<A, U>(&mut self, address: A, bytes: U) -> Result<(), ErrorKind>
     where
         U: IntoIterator<Item = u8>,
@@ -513,7 +521,7 @@ where
     }
 }
 
-impl<'pio, P, SMI, SDA, SCL> embedded_hal_async::i2c::ErrorType for I2c<'pio, P, SMI, SDA, SCL>
+impl<'pio, P, SMI, SDA, SCL> embedded_hal_async::i2c::ErrorType for I2C<'pio, P, SMI, SDA, SCL>
 where
     P: PIOExt + FunctionConfig,
     SMI: StateMachineIndex,
@@ -523,7 +531,7 @@ where
 {
     type Error = ErrorKind;
 }
-impl<'pio, P, SMI, SDA, SCL, A> embedded_hal_async::i2c::I2c<A> for I2c<'pio, P, SMI, SDA, SCL>
+impl<'pio, P, SMI, SDA, SCL, A> embedded_hal_async::i2c::I2c<A> for I2C<'pio, P, SMI, SDA, SCL>
 where
     P: PIOExt + FunctionConfig + 'pio,
     SMI: StateMachineIndex,
@@ -559,14 +567,7 @@ where
     }
 
     fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Self::WriteFuture<'a> {
-        async move {
-            let mut res = self.setup(address, false, false).await;
-            if res.is_ok() {
-                res = self.write(bytes.into_iter().cloned()).await;
-            }
-            self.stop().await;
-            res
-        }
+        self.write_iter(address, bytes.into_iter().cloned())
     }
 
     fn write_read<'a>(

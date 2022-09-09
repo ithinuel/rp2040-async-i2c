@@ -58,7 +58,7 @@ async fn demo() {
     use rp2040_hal::pio::PIOExt;
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
 
-    let mut i2c_pio = rp2040_async_i2c::pio::I2c::new(
+    let mut i2c_pio = rp2040_async_i2c::pio::I2C::new(
         &mut pio,
         pins.gpio20.into_pull_up_disabled(),
         pins.gpio21.into_pull_up_disabled(),

@@ -55,7 +55,7 @@ async fn demo() {
         &mut pac.RESETS,
     );
 
-    let mut i2c = rp2040_async_i2c::I2c::new(
+    let mut i2c = rp2040_async_i2c::i2c::I2C::new(
         pac.I2C0,
         pins.gpio20.into_mode(),
         pins.gpio21.into_mode(),
