@@ -14,6 +14,15 @@ embedded-hal-async = "0.1.0-alpha.1"
 fugit = "0.3.6"
 pio = "0.2"
 
+[dev-dependencies]
+cortex-m-rt = "0.7.1"
+cortex-m = "0.7.6"
+rp-pico = { version = "0.5.0", features = ["rt"] }
+defmt = "0.3.1"
+defmt-rtt = "0.3.0"
+panic-probe = { version = "*", features = ["print-defmt"] }
+nostd_async = { version = "0.6.0", features = ["cortex_m"] }
+
 [patch.crates-io]
 embedded-hal = { git = "https://github.com/rust-embedded/embedded-hal" }
 embedded-hal-async = { git = "https://github.com/rust-embedded/embedded-hal" }

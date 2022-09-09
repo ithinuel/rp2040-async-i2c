@@ -13,7 +13,7 @@ use fugit::HertzU32;
 use rp2040_hal::{
     gpio::{bank0::BankPinId, FunctionI2C, Pin, PinId},
     i2c::{Error, SclPin, SdaPin},
-    pac::{self, i2c0::RegisterBlock as Block, RESETS},
+    pac::{self, i2c0::RegisterBlock, RESETS},
 };
 
 pub mod pio;
@@ -53,11 +53,14 @@ pub struct I2c<I2C, Pins> {
     waker_setter: Option<fn(core::task::Waker)>,
 }
 
-impl<T: Deref<Target = Block>, PINS> embedded_hal_async::i2c::ErrorType for I2c<T, PINS> {
+impl<T: Deref<Target = RegisterBlock>, PINS> embedded_hal_async::i2c::ErrorType for I2c<T, PINS> {
     type Error = Error;
 }
-impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: PinId + BankPinId>
-    I2c<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+impl<T, Sda, Scl> I2c<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+where
+    T: SubSystemReset + Deref<Target = RegisterBlock>,
+    Sda: PinId + BankPinId,
+    Scl: PinId + BankPinId,
 {
     /// Configures the I2C peripheral to work in controller mode
     pub fn new(
@@ -153,7 +156,7 @@ impl<T: SubSystemReset + Deref<Target = Block>, Sda: PinId + BankPinId, Scl: Pin
 }
 impl<T, Sda, Scl> I2c<T, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
 where
-    T: SubSystemReset + Deref<Target = Block>,
+    T: SubSystemReset + Deref<Target = RegisterBlock>,
     Sda: PinId + BankPinId,
     Scl: PinId + BankPinId,
 {
@@ -166,7 +169,7 @@ where
     }
 }
 
-impl<T: Deref<Target = Block>, PINS> I2c<T, PINS> {
+impl<T: Deref<Target = RegisterBlock>, PINS> I2c<T, PINS> {
     async fn block_on<F: FnMut(&mut Self) -> Poll<U>, U>(&mut self, mut f: F) -> U {
         // if a waker is set enbale interrupt
         future::poll_fn(|cx| {
@@ -269,7 +272,11 @@ impl<T: Deref<Target = Block>, PINS> I2c<T, PINS> {
         }
     }
 
-    async fn non_blocking_read_internal(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    async fn non_blocking_read_internal(
+        &mut self,
+        buffer: &mut [u8],
+        do_stop: bool,
+    ) -> Result<(), Error> {
         let mut received = 0;
         let mut queued = 0;
         let mut abort_reason = None;
@@ -282,7 +289,7 @@ impl<T: Deref<Target = Block>, PINS> I2c<T, PINS> {
                         w.restart().disable();
                     }
 
-                    if (queued + 1) == buffer.len() {
+                    if (queued + 1) == buffer.len() && do_stop {
                         w.stop().enable();
                     } else {
                         w.stop().disable();
@@ -321,7 +328,7 @@ impl<T: Deref<Target = Block>, PINS> I2c<T, PINS> {
 
         // wait for stop condition to be emitted.
         self.block_on(|me| {
-            if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+            if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() && do_stop {
                 me.i2c
                     .ic_intr_mask
                     .modify(|_, w| w.m_rx_full().disabled().m_tx_abrt().disabled());
@@ -443,7 +450,7 @@ impl<T: Deref<Target = Block>, PINS> I2c<T, PINS> {
 }
 impl<T, PINS, A> embedded_hal_async::i2c::I2c<A> for I2c<T, PINS>
 where
-    T: Deref<Target = Block>,
+    T: Deref<Target = RegisterBlock>,
     A: AddressMode + 'static + Into<u16>,
 {
     type WriteFuture<'a>
@@ -467,7 +474,7 @@ where
         async move {
             Self::validate(addr, None, Some(buffer.is_empty()))?;
             self.setup(addr);
-            self.non_blocking_read_internal(buffer).await
+            self.non_blocking_read_internal(buffer, true).await
         }
     }
 
@@ -495,15 +502,49 @@ where
             self.setup(addr);
             self.non_blocking_write_internal(bytes.iter().cloned(), false)
                 .await?;
-            self.non_blocking_read_internal(buffer).await
+            self.non_blocking_read_internal(buffer, true).await
         }
     }
 
     fn transaction<'a, 'b>(
         &'a mut self,
-        _: A,
-        _: &'a mut [Operation<'b>],
+        address: A,
+        operations: &'a mut [Operation<'b>],
     ) -> Self::TransactionFuture<'a, 'b> {
-        async move { todo!() }
+        let addr: u16 = address.into();
+
+        async move {
+            let mut res = Ok(());
+            let mut iterator = operations.iter_mut();
+            while let Some(op) = iterator.next() {
+                match op {
+                    Operation::Read(buffer) => {
+                        res = Self::validate(addr, None, Some(buffer.is_empty()));
+                        if res.is_ok() {
+                            self.setup(addr);
+                            res = self
+                                .non_blocking_read_internal(buffer, iterator.len() == 0)
+                                .await;
+                        }
+                    }
+                    Operation::Write(buffer) => {
+                        res = Self::validate(addr, Some(buffer.is_empty()), None);
+                        if res.is_ok() {
+                            self.setup(addr);
+                            res = self
+                                .non_blocking_write_internal(
+                                    buffer.into_iter().cloned(),
+                                    iterator.len() == 0,
+                                )
+                                .await;
+                        }
+                    }
+                }
+                if res.is_err() {
+                    break;
+                }
+            }
+            res
+        }
     }
 }

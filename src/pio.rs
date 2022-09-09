@@ -94,10 +94,11 @@ where
     where
         Function<P>: ValidPinMode<SDA> + ValidPinMode<SCL>,
     {
+        // prepare the PIO program
         let mut a = pio::Assembler::<32>::new_with_side_set(SIDESET);
 
-        let mut byte_nack = a.label();
         let mut byte_send = a.label();
+        let mut byte_nack = a.label();
         let mut byte_end = a.label();
         let mut bitloop = a.label();
         let mut wrap_target = a.label();
@@ -107,7 +108,7 @@ where
         a.bind(&mut byte_nack);
         // continue if NAK was expected
         a.jmp(pio::JmpCondition::YDecNonZero, &mut byte_end);
-        // Otherwise stop, ask for help (raises the irq line (0+SM::id())%4)
+        // In nack was not expected, park on IRQ (0+SM:id())%4 until the software handles it.
         a.irq(false, true, 0, true);
         a.jmp(pio::JmpCondition::Always, &mut byte_end);
 
@@ -117,22 +118,31 @@ where
         // loop 8 times
         a.set(pio::SetDestination::X, 7);
 
+        // Send 1 byte
         a.bind(&mut bitloop);
+        // Serialize write data (all-ones is reading)
         a.out_with_delay(pio::OutDestination::PINDIRS, 1, 7);
+        // SCL rising edge
         a.nop_with_delay_and_side_set(2, 1);
         // Allow clock to be stretched
         a.wait_with_delay(1, pio::WaitSource::GPIO, SCL::DYN.num, false, 4);
+        // Sample read data in middle of SCL pulse
         a.in_with_delay(pio::InSource::PINS, 1, 7);
+        // SCL falling edge
         a.jmp_with_delay_and_side_set(pio::JmpCondition::XDecNonZero, &mut bitloop, 7, 0);
 
         // handle ACK pulse
+        // On reads, we provide the ACK, on writes, the pin is passively pulled up
         a.out_with_delay(pio::OutDestination::PINDIRS, 1, 7);
+        // SCL risin edge
         a.nop_with_delay_and_side_set(7, 1);
+        // Allow clock to be stretched
         a.wait_with_delay(1, pio::WaitSource::GPIO, SCL::DYN.num, false, 7);
         // Test SDA for ACK/NACK, fall through if ACK
         a.jmp_with_delay_and_side_set(pio::JmpCondition::PinHigh, &mut byte_nack, 2, 0);
 
-        a.bind(&mut &mut byte_end);
+        a.bind(&mut byte_end);
+        // complete the operation by pushing the shift register to the fifo
         a.push(false, true);
 
         a.bind(&mut wrap_target);
@@ -141,8 +151,9 @@ where
         // Instr == 0, this is a data record
         a.jmp(pio::JmpCondition::XIsZero, &mut byte_send);
         // Instr > 0, remainder of this OSR is invalid
-        a.out(pio::OutDestination::NULL, 32);
+        a.out(pio::OutDestination::NULL, 10);
 
+        // special action sub function (Start/Restart/Stop sequences)
         a.bind(&mut do_exec);
         // Execute one instruction per FIFO word
         a.out(pio::OutDestination::EXEC, 16);
@@ -270,11 +281,19 @@ where
         self.pio.get_irq_raw() & (1 << SMI::id()) != 0
     }
 
-    fn resume_after_error(&mut self) {
-        // drain tx_fifo
+    async fn resume_after_error(&mut self) {
         self.tx.drain_fifo();
-        // resume state machine, will push the received byte
         self.pio.clear_irq(1 << SMI::id());
+
+        self.block_on(|me| {
+            if me.rx.read().is_some() {
+                Poll::Ready(())
+            } else {
+                me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                Poll::Pending
+            }
+        })
+        .await;
     }
 
     async fn put(&mut self, data: u16) {
@@ -296,7 +315,6 @@ where
 
         // instr (6bits) = 0 | final (1bit) | data (8bits) | read ack (1bit)
         let word = final_field | data_field | nak_field;
-
         self.put(word).await
     }
 
@@ -321,20 +339,8 @@ where
 
     async fn stop(&mut self) {
         if self.has_errored() {
-            self.resume_after_error();
-            // we are expecting 1 extra byte
-            self.block_on(|me| {
-                if me.rx.is_empty() {
-                    me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                    Poll::Pending
-                } else {
-                    Poll::Ready(())
-                }
-            })
-            .await;
-            let _ = self.rx.read();
+            self.resume_after_error().await;
         }
-
         self.put_instr_sequence([SC0SD0, SC1SD0, SC1SD1]).await
     }
 
@@ -345,7 +351,7 @@ where
 
     async fn setup<A>(&mut self, address: A, read: bool, do_restart: bool) -> Result<(), ErrorKind>
     where
-        A: AddressMode + Into<u16> + 'static,
+        A: Into<u16> + 'static,
     {
         // TODO: validate addr
         let address: u16 = address.into();
@@ -363,31 +369,17 @@ where
         let read_flag = if read { 1 } else { 0 };
 
         // send address
-        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<TenBitAddress>() {
+        use core::any::TypeId;
+        let a_tid = TypeId::of::<A>();
+        let mut address_len: u32 = if TypeId::of::<SevenBitAddress>() == a_tid {
+            let addr = (address << 1) | read_flag;
+            self.put_data(addr as u8, true, false).await;
+            1
+        } else if TypeId::of::<TenBitAddress>() == a_tid {
             let addr_hi = 0xF0 | ((address >> 7) & 0x6) | read_flag;
             let addr_lo = address & 0xFF;
             self.put_data(addr_hi as u8, true, false).await;
             self.put_data(addr_lo as u8, true, false).await;
-        } else {
-            let addr = (address << 1) | read_flag;
-            self.put_data(addr as u8, true, false).await;
-        }
-
-        // TODO: wait for addr to complete and check the addr is correct
-        // if not then there is a bus contention
-        use core::any::TypeId;
-        let a_tid = TypeId::of::<A>();
-        // this isn't stable yet
-        //const SEVENBIT_TID: TypeId = TypeId::of::<SevenBitAddress>();
-        //const TENBIT_TID: TypeId = TypeId::of::<TenBitAddress>();
-        //let mut ignore_cnt: u32 = match a_tid {
-        //    SEVENBIT_TID => 1,
-        //    TENBIT_TID => 2,
-        //    _ => panic!("Unsupported address type."),
-        //};
-        let mut address_len: u32 = if TypeId::of::<SevenBitAddress>() == a_tid {
-            1
-        } else if TypeId::of::<TenBitAddress>() == a_tid {
             2
         } else {
             panic!("Unsupported address type.");
@@ -397,11 +389,12 @@ where
             while address_len > 0 && me.rx.read().is_some() {
                 address_len -= 1;
             }
+
             if me.has_errored() || address_len == 0 {
                 Poll::Ready(())
             } else {
-                me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
                 me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
                 Poll::Pending
             }
         })
@@ -417,48 +410,79 @@ where
     async fn read(&mut self, buffer: &mut [u8]) -> Result<(), ErrorKind> {
         assert!(
             !self.has_errored() && self.rx.is_empty(),
-            "Invalid state in entering write: has_errored:{} rx empty:{}",
+            "Invalid state in entering read: has_errored:{} rx.is_empty:{}",
             self.has_errored(),
             self.rx.is_empty()
         );
 
-        let mut byte_live = 0;
-
+        let mut queued = 0;
         let mut iter = buffer.iter_mut();
 
-        while byte_live < iter.len() && !self.has_errored() {
-            if !self.tx.is_full() {
-                byte_live += 1;
-                self.put_data(0xFF, true, iter.len() == byte_live).await;
+        // while there are still bytes to queue
+        while iter.len() != 0 && !self.has_errored() {
+            if queued < iter.len() && !self.tx.is_full() {
+                queued += 1;
+                let last = queued == iter.len();
+                self.put_data(0xFF, last, last).await;
             }
+
             if let Some(byte) = self.rx.read() {
-                byte_live -= 1;
+                queued -= 1;
                 if let Some(data) = iter.next() {
                     *data = (byte & 0xFF) as u8;
                 }
+            } else {
+                self.block_on(|me| {
+                    if me.has_errored() || (iter.len() > 0 && !me.tx.is_full()) || !me.rx.is_empty()
+                    {
+                        Poll::Ready(())
+                    } else {
+                        if iter.len() > 0 {
+                            me.sm.enable_tx_not_full_interrupt(PioIRQ::Irq0);
+                        }
+                        me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
+                        me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                        Poll::Pending
+                    }
+                })
+                .await;
             }
-            self.block_on(|me| {
-                if me.tx.is_full() && me.rx.is_empty() && !me.has_errored() {
-                    me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                    me.sm.enable_tx_not_full_interrupt(PioIRQ::Irq0);
-                    me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
-                    Poll::Pending
-                } else {
-                    Poll::Ready(())
-                }
-            })
-            .await;
         }
 
-        // nothing more to send, wait for the rest to arrive
-        self.block_on(|me| {
-            if let Some(byte) = me.rx.read() {
-                byte_live -= 1;
-                if let Some(data) = iter.next() {
-                    *data = (byte & 0xFF) as u8;
-                }
+        if self.has_errored() {
+            Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn write<B>(&mut self, buffer: B) -> Result<(), ErrorKind>
+    where
+        B: IntoIterator<Item = u8>,
+    {
+        assert!(
+            !self.has_errored() && self.rx.is_empty(),
+            "Invalid state in entering write: has_errored:{} rx.is_empty:{}",
+            self.has_errored(),
+            self.rx.is_empty()
+        );
+
+        let mut queued = 0;
+        let mut iter = buffer.into_iter().peekable();
+        while let (Some(byte), false) = (iter.next(), self.has_errored()) {
+            // ignore any received bytes
+            if self.rx.read().is_some() {
+                queued -= 1;
             }
-            if byte_live == 0 || me.has_errored() {
+            self.put_data(byte, true, iter.peek().is_none()).await;
+            queued += 1;
+        }
+
+        self.block_on(|me| {
+            if me.rx.read().is_some() {
+                queued -= 1;
+            }
+            if queued == 0 || me.has_errored() {
                 Poll::Ready(())
             } else {
                 me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
@@ -471,57 +495,6 @@ where
         if self.has_errored() {
             Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data))
         } else {
-            assert_eq!(byte_live, 0);
-            Ok(())
-        }
-    }
-
-    async fn write<B>(&mut self, buffer: B) -> Result<(), ErrorKind>
-    where
-        B: IntoIterator<Item = u8>,
-    {
-        assert!(
-            !self.has_errored() && self.rx.is_empty(),
-            "Invalid state in entering write: has_errored:{} rx empty:{}",
-            self.has_errored(),
-            self.rx.is_empty()
-        );
-
-        // number of bytes on flight, this helps make sure we keep tx&rx balanced.
-        let mut byte_live = 0u32;
-
-        let mut iter = buffer.into_iter().peekable();
-        while let (Some(byte), false) = (iter.next(), self.has_errored()) {
-            // ignore any received bytes
-            if self.rx.read().is_some() {
-                byte_live -= 1;
-            }
-
-            self.put_data(byte, true, iter.peek().is_none()).await;
-            byte_live += 1;
-        }
-
-        while byte_live > 0 && !self.has_errored() {
-            if self.rx.read().is_some() {
-                byte_live -= 1;
-            }
-
-            self.block_on(|me| {
-                if byte_live == 0 || !me.rx.is_empty() || me.has_errored() {
-                    Poll::Ready(())
-                } else {
-                    me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
-                    me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                    Poll::Pending
-                }
-            })
-            .await;
-        }
-
-        if self.has_errored() {
-            Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data))
-        } else {
-            assert_eq!(byte_live, 0);
             Ok(())
         }
     }
@@ -620,9 +593,34 @@ where
 
     fn transaction<'a, 'b>(
         &'a mut self,
-        _: A,
-        _: &'a mut [Operation<'b>],
+        address: A,
+        operations: &'a mut [Operation<'b>],
     ) -> Self::TransactionFuture<'a, 'b> {
-        async move { todo!() }
+        async move {
+            let mut first = true;
+            let mut res = Ok(());
+            for op in operations {
+                match op {
+                    Operation::Read(buf) => {
+                        res = self.setup(address, true, !first).await;
+                        if res.is_ok() {
+                            res = self.read(buf).await;
+                        }
+                    }
+                    Operation::Write(buffer) => {
+                        res = self.setup(address, false, !first).await;
+                        if res.is_ok() {
+                            res = self.write(buffer.into_iter().cloned()).await;
+                        }
+                    }
+                }
+                if res.is_err() {
+                    break;
+                }
+                first = false;
+            }
+            self.stop().await;
+            res
+        }
     }
 }
