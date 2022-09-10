@@ -13,6 +13,7 @@ embedded-hal = { version = "=1.0.0-alpha.8" }
 embedded-hal-async = "0.1.0-alpha.1"
 fugit = "0.3.6"
 pio = "0.2"
+pio-proc = "0.2"
 
 [dev-dependencies]
 cortex-m-rt = "0.7.1"
