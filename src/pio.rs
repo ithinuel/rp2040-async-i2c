@@ -64,9 +64,9 @@ where
     Function<P>: ValidPinMode<SDA> + ValidPinMode<SCL>,
 {
     pio: &'pio mut PIO<P>,
-    sm: StateMachine<(P, SMI), rp2040_hal::pio::Running>,
     tx: Tx<(P, SMI)>,
     rx: Rx<(P, SMI)>,
+    _sm: StateMachine<(P, SMI), rp2040_hal::pio::Running>,
     _sda: Pin<SDA, Function<P>>,
     _scl: Pin<SCL, Function<P>>,
     waker_setter: Option<fn(core::task::Waker)>,
@@ -247,9 +247,9 @@ where
 
         Self {
             pio,
-            sm,
             tx,
             rx,
+            _sm: sm,
             _sda: sda,
             _scl: scl,
             waker_setter: None,
@@ -296,7 +296,7 @@ where
             if me.rx.read().is_some() {
                 Poll::Ready(())
             } else {
-                me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
                 Poll::Pending
             }
         })
@@ -308,7 +308,7 @@ where
             if me.tx.write_u16_replicated(data) {
                 Poll::Ready(())
             } else {
-                me.sm.enable_tx_not_full_interrupt(PioIRQ::Irq0);
+                me.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
                 Poll::Pending
             }
         })
@@ -400,8 +400,8 @@ where
             if me.has_errored() || address_len == 0 {
                 Poll::Ready(())
             } else {
-                me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
+                me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
                 Poll::Pending
             }
         })
@@ -445,10 +445,10 @@ where
                         Poll::Ready(())
                     } else {
                         if iter.len() > 0 {
-                            me.sm.enable_tx_not_full_interrupt(PioIRQ::Irq0);
+                            me.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
                         }
-                        me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
-                        me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                        me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
+                        me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
                         Poll::Pending
                     }
                 })
@@ -492,8 +492,8 @@ where
             if queued == 0 || me.has_errored() {
                 Poll::Ready(())
             } else {
-                me.pio.enable_sm_interrupt(PioIRQ::Irq0, SMI::id() as u8);
-                me.sm.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+                me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
+                me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
                 Poll::Pending
             }
         })
