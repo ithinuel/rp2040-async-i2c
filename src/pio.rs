@@ -267,13 +267,20 @@ where
         self.waker_setter = Some(waker_setter);
     }
 
-    async fn block_on<F: FnMut(&mut Self) -> Poll<U>, U>(&mut self, mut f: F) -> U {
+    /// Calls `f` to check if we are ready or not.
+    /// If not, `g` is called once the waker is set (to eg enable the required interrupts).
+    async fn block_on<F, U, G>(&mut self, mut f: F, mut g: G) -> U
+    where
+        F: FnMut(&mut Self) -> Poll<U>,
+        G: FnMut(&mut Self),
+    {
         future::poll_fn(|cx| {
             let r = f(self);
 
             if r.is_pending() {
                 if let Some(waker_setter) = self.waker_setter {
                     waker_setter(cx.waker().clone());
+                    g(self);
                 } else {
                     // always ready to scan
                     cx.waker().wake_by_ref();
@@ -292,26 +299,34 @@ where
         self.tx.drain_fifo();
         self.pio.clear_irq(1 << SMI::id());
 
-        self.block_on(|me| {
-            if me.rx.read().is_some() {
-                Poll::Ready(())
-            } else {
+        self.block_on(
+            |me| {
+                if me.rx.read().is_some() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            },
+            |me| {
                 me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                Poll::Pending
-            }
-        })
+            },
+        )
         .await;
     }
 
     async fn put(&mut self, data: u16) {
-        self.block_on(|me| {
-            if me.tx.write_u16_replicated(data) {
-                Poll::Ready(())
-            } else {
+        self.block_on(
+            |me| {
+                if me.tx.write_u16_replicated(data) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            },
+            |me| {
                 me.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
-                Poll::Pending
-            }
-        })
+            },
+        )
         .await;
     }
 
@@ -392,19 +407,23 @@ where
             panic!("Unsupported address type.");
         };
 
-        self.block_on(|me| {
-            while address_len > 0 && me.rx.read().is_some() {
-                address_len -= 1;
-            }
+        self.block_on(
+            |me| {
+                while address_len > 0 && me.rx.read().is_some() {
+                    address_len -= 1;
+                }
 
-            if me.has_errored() || address_len == 0 {
-                Poll::Ready(())
-            } else {
+                if me.has_errored() || address_len == 0 {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            },
+            |me| {
                 me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
                 me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
-                Poll::Pending
-            }
-        })
+            },
+        )
         .await;
 
         if self.has_errored() {
@@ -439,19 +458,25 @@ where
                     *data = (byte & 0xFF) as u8;
                 }
             } else {
-                self.block_on(|me| {
-                    if me.has_errored() || (iter.len() > 0 && !me.tx.is_full()) || !me.rx.is_empty()
-                    {
-                        Poll::Ready(())
-                    } else {
+                self.block_on(
+                    |me| {
+                        if me.has_errored()
+                            || (iter.len() > 0 && !me.tx.is_full())
+                            || !me.rx.is_empty()
+                        {
+                            Poll::Ready(())
+                        } else {
+                            Poll::Pending
+                        }
+                    },
+                    |me| {
                         if iter.len() > 0 {
                             me.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
                         }
                         me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
                         me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                        Poll::Pending
-                    }
-                })
+                    },
+                )
                 .await;
             }
         }
@@ -485,18 +510,22 @@ where
             queued += 1;
         }
 
-        self.block_on(|me| {
-            if me.rx.read().is_some() {
-                queued -= 1;
-            }
-            if queued == 0 || me.has_errored() {
-                Poll::Ready(())
-            } else {
+        self.block_on(
+            |me| {
+                if me.rx.read().is_some() {
+                    queued -= 1;
+                }
+                if queued == 0 || me.has_errored() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            },
+            |me| {
                 me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
                 me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                Poll::Pending
-            }
-        })
+            },
+        )
         .await;
 
         if self.has_errored() {

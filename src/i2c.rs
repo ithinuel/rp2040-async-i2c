@@ -171,14 +171,20 @@ impl<B, P> I2C<B, P>
 where
     B: Deref<Target = RegisterBlock>,
 {
-    async fn block_on<F: FnMut(&mut Self) -> Poll<U>, U>(&mut self, mut f: F) -> U {
-        // if a waker is set enbale interrupt
+    /// Calls `f` to check if we are ready or not.
+    /// If not, `g` is called once the waker is set (to eg enable the required interrupts).
+    async fn block_on<F, U, G>(&mut self, mut f: F, mut g: G) -> U
+    where
+        F: FnMut(&mut Self) -> Poll<U>,
+        G: FnMut(&mut Self),
+    {
         future::poll_fn(|cx| {
             let r = f(self);
 
             if r.is_pending() {
                 if let Some(waker_setter) = self.waker_setter {
                     waker_setter(cx.waker().clone());
+                    g(self);
                 } else {
                     // always ready to scan
                     cx.waker().wake_by_ref();
@@ -303,18 +309,22 @@ where
             }
 
             match self
-                .block_on(|me| {
-                    if let Some(abort_reason) = me.read_and_clear_abort_reason() {
-                        Poll::Ready(Err(abort_reason))
-                    } else if me.i2c.ic_rxflr.read().bits() != 0 {
-                        Poll::Ready(Ok(()))
-                    } else {
+                .block_on(
+                    |me| {
+                        if let Some(abort_reason) = me.read_and_clear_abort_reason() {
+                            Poll::Ready(Err(abort_reason))
+                        } else if me.i2c.ic_rxflr.read().bits() != 0 {
+                            Poll::Ready(Ok(()))
+                        } else {
+                            Poll::Pending
+                        }
+                    },
+                    |me| {
                         me.i2c
                             .ic_intr_mask
                             .modify(|_, w| w.m_rx_full().disabled().m_tx_abrt().disabled());
-                        Poll::Pending
-                    }
-                })
+                    },
+                )
                 .await
             {
                 Ok(_) => {}
@@ -329,16 +339,20 @@ where
         }
 
         // wait for stop condition to be emitted.
-        self.block_on(|me| {
-            if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() && do_stop {
+        self.block_on(
+            |me| {
+                if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() && do_stop {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            },
+            |me| {
                 me.i2c
                     .ic_intr_mask
                     .modify(|_, w| w.m_rx_full().disabled().m_tx_abrt().disabled());
-                Poll::Pending
-            } else {
-                Poll::Ready(())
-            }
-        })
+            },
+        )
         .await;
         self.i2c.ic_clr_stop_det.read().clr_stop_det();
 
@@ -359,18 +373,22 @@ where
             if self.tx_fifo_full() {
                 // wait a bit
                 match self
-                    .block_on(|me| {
-                        if let Some(abort_reason) = me.read_and_clear_abort_reason() {
-                            Poll::Ready(Err(abort_reason))
-                        } else if !me.tx_fifo_full() {
-                            Poll::Ready(Ok(()))
-                        } else {
+                    .block_on(
+                        |me| {
+                            if let Some(abort_reason) = me.read_and_clear_abort_reason() {
+                                Poll::Ready(Err(abort_reason))
+                            } else if !me.tx_fifo_full() {
+                                Poll::Ready(Ok(()))
+                            } else {
+                                Poll::Pending
+                            }
+                        },
+                        |me| {
                             me.i2c
                                 .ic_intr_mask
                                 .modify(|_, w| w.m_tx_empty().disabled().m_tx_abrt().disabled());
-                            Poll::Pending
-                        }
-                    })
+                        },
+                    )
                     .await
                 {
                     Ok(_) => {}
@@ -394,16 +412,20 @@ where
         }
         if abort_reason.is_none() {
             // wait for the tx_fifo to be emptied
-            self.block_on(|me| {
-                if me.i2c.ic_raw_intr_stat.read().tx_empty().is_inactive() {
+            self.block_on(
+                |me| {
+                    if me.i2c.ic_raw_intr_stat.read().tx_empty().is_inactive() {
+                        Poll::Pending
+                    } else {
+                        Poll::Ready(())
+                    }
+                },
+                |me| {
                     me.i2c
                         .ic_intr_mask
                         .modify(|_, w| w.m_tx_empty().disabled().m_tx_abrt().disabled());
-                    Poll::Pending
-                } else {
-                    Poll::Ready(())
-                }
-            })
+                },
+            )
             .await;
 
             abort_reason = self.read_and_clear_abort_reason();
@@ -412,16 +434,20 @@ where
         if abort_reason.is_some() || do_stop {
             // If the transaction was aborted or if it completed
             // successfully wait until the STOP condition has occured.
-            self.block_on(|me| {
-                if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+            self.block_on(
+                |me| {
+                    if me.i2c.ic_raw_intr_stat.read().stop_det().is_inactive() {
+                        Poll::Pending
+                    } else {
+                        Poll::Ready(())
+                    }
+                },
+                |me| {
                     me.i2c
                         .ic_intr_mask
                         .modify(|_, w| w.m_tx_empty().disabled().m_tx_abrt().disabled());
-                    Poll::Pending
-                } else {
-                    Poll::Ready(())
-                }
-            })
+                },
+            )
             .await;
 
             self.i2c.ic_clr_stop_det.read().clr_stop_det();
