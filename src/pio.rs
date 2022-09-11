@@ -94,11 +94,7 @@ where
     where
         Function<P>: ValidPinMode<SDA> + ValidPinMode<SCL>,
     {
-        assert!(
-            SCL::DYN.num == (SDA::DYN.num + 1),
-            "SDA and SCL must be SDA + 1"
-        );
-        let program = pio_proc::pio_asm!(
+        let mut program = pio_proc::pio_asm!(
             ".side_set 1 opt pindirs"
 
             "byte_nack:"
@@ -114,14 +110,14 @@ where
             "  out  pindirs 1                [7]"
             "  nop                    side 1 [2]"
             //      polarity
-            "  wait 1       pin 1            [4]"
+            "  wait 1       gpio 0           [4]"
             "  in   pins 1                   [7]"
             "  jmp  x--     bitloop   side 0 [7]"
 
             "  out  pindirs 1                [7]"
             "  nop                    side 1 [7]"
             //      polarity
-            "  wait 1       pin 1            [7]"
+            "  wait 1       gpio 0           [7]"
             "  jmp  pin     byte_nack side 0 [2]"
 
             "byte_end:"
@@ -138,6 +134,9 @@ where
             ".wrap"
         )
         .program;
+        // patch the program to decouple sda and scl
+        program.code[7] |= u16::from(SCL::DYN.num);
+        program.code[12] |= u16::from(SCL::DYN.num);
 
         // Install the program into PIO instruction memory.
         let installed = pio.install(&program).unwrap();
