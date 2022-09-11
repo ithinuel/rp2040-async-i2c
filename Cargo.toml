@@ -27,4 +27,4 @@ nostd_async = { version = "0.6.0", features = ["cortex_m"] }
 [patch.crates-io]
 embedded-hal = { git = "https://github.com/rust-embedded/embedded-hal" }
 embedded-hal-async = { git = "https://github.com/rust-embedded/embedded-hal" }
-rp2040-hal = { git = "https://github.com/ithinuel/rp-hal", branch = "add-alternate-pio-methods" }
+rp2040-hal = { git = "https://github.com/ithinuel/rp-hal", branch = "develop" }
