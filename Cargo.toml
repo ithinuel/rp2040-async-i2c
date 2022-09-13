@@ -24,6 +24,10 @@ defmt-rtt = "0.3.0"
 panic-probe = { version = "*", features = ["print-defmt"] }
 nostd_async = { version = "0.6.0", features = ["cortex_m"] }
 
+[[example]]
+name = "pico_i2c_pio"
+required-features = ["pio"]
+
 [features]
 pio = ["dep:pio", "dep:pio-proc"]
 
