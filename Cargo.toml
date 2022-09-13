@@ -19,9 +19,9 @@ pio-proc = "0.2"
 cortex-m-rt = "0.7.1"
 cortex-m = "0.7.6"
 rp-pico = { version = "0.5.0", features = ["rt"] }
-defmt = "0.3.1"
-defmt-rtt = "0.3.0"
-panic-probe = { version = "*", features = ["print-defmt"] }
+defmt = "0.3.2"
+defmt-rtt = "0.3.2"
+panic-probe = { version = "0.3.0", features = ["print-defmt"] }
 nostd_async = { version = "0.6.0", features = ["cortex_m"] }
 
 [patch.crates-io]
