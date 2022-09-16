@@ -64,9 +64,9 @@ where
     Function<P>: ValidPinMode<SDA> + ValidPinMode<SCL>,
 {
     pio: &'pio mut PIO<P>,
+    sm: StateMachine<(P, SMI), rp2040_hal::pio::Running>,
     tx: Tx<(P, SMI)>,
     rx: Rx<(P, SMI)>,
-    _sm: StateMachine<(P, SMI), rp2040_hal::pio::Running>,
     _sda: Pin<SDA, Function<P>>,
     _scl: Pin<SCL, Function<P>>,
     waker_setter: Option<fn(core::task::Waker)>,
@@ -224,9 +224,9 @@ where
 
         Self {
             pio,
+            sm,
             tx,
             rx,
-            _sm: sm,
             _sda: sda,
             _scl: scl,
             waker_setter: None,
@@ -273,7 +273,7 @@ where
     }
 
     async fn resume_after_error(&mut self) {
-        self.tx.drain_fifo();
+        self.sm.drain_tx_fifo();
         self.pio.clear_irq(1 << SMI::id());
 
         self.block_on(
