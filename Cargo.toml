@@ -9,8 +9,8 @@ authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 
 [dependencies]
 rp2040-hal = { version = "0.6.0", features = ["eh1_0_alpha"] }
-embedded-hal = { version = "=1.0.0-alpha.8" }
-embedded-hal-async = "0.1.0-alpha.1"
+embedded-hal = { version = "=1.0.0-alpha.9" }
+embedded-hal-async = "0.1.0-alpha.2"
 fugit = "0.3.6"
 pio = { version = "0.2", optional = true }
 pio-proc = { version = "0.2", optional = true }

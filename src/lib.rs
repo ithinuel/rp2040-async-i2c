@@ -2,7 +2,6 @@
 #![no_std]
 #![forbid(missing_docs)]
 #![feature(type_alias_impl_trait)]
-#![feature(generic_associated_types)]
 
 /// Implementation for the Synopsys I2C peripheral as implemented on the RP2040 chip.
 pub mod i2c;

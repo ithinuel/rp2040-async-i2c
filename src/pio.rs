@@ -1,7 +1,7 @@
 use core::{future, future::Future, task::Poll};
 
 use embedded_hal::i2c::{
-    blocking::Operation, AddressMode, ErrorKind, NoAcknowledgeSource, SevenBitAddress,
+    Operation, AddressMode, ErrorKind, NoAcknowledgeSource, SevenBitAddress,
     TenBitAddress,
 };
 use fugit::HertzU32;
