@@ -1,8 +1,7 @@
-use core::{future, future::Future, task::Poll};
+use core::{future, task::Poll};
 
 use embedded_hal::i2c::{
-    Operation, AddressMode, ErrorKind, NoAcknowledgeSource, SevenBitAddress,
-    TenBitAddress,
+    AddressMode, ErrorKind, NoAcknowledgeSource, Operation, SevenBitAddress, TenBitAddress,
 };
 use fugit::HertzU32;
 use pio::{Instruction, InstructionOperands, SideSet};
@@ -546,88 +545,65 @@ where
     Function<P>: ValidPinMode<SDA> + ValidPinMode<SCL>,
     A: AddressMode + Into<u16> + Copy + 'static,
 {
-    type WriteFuture<'a>
-    = impl Future<Output = Result<(), Self::Error>> + 'a where
-        Self: 'a ;
-
-    type ReadFuture<'a> = impl Future<Output = Result<(), Self::Error>> + 'a
-    where
-        Self: 'a;
-
-    type WriteReadFuture<'a> = impl Future<Output = Result<(), Self::Error>> + 'a
-    where
-        Self: 'a;
-
-    type TransactionFuture<'a, 'b> = impl Future<Output = Result<(), Self::Error>> + 'a
-        where Self: 'a, 'b: 'a;
-
-    fn read<'a>(&'a mut self, address: A, buffer: &'a mut [u8]) -> Self::ReadFuture<'a> {
-        async move {
-            let mut res = self.setup(address, true, false).await;
-            if res.is_ok() {
-                res = self.read(buffer).await;
-            }
-            self.stop().await;
-            res
+    async fn read<'a>(&'a mut self, address: A, buffer: &'a mut [u8]) -> Result<(), ErrorKind> {
+        let mut res = self.setup(address, true, false).await;
+        if res.is_ok() {
+            res = self.read(buffer).await;
         }
+        self.stop().await;
+        res
     }
 
-    fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Self::WriteFuture<'a> {
-        self.write_iter(address, bytes.into_iter().cloned())
+    async fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Result<(), ErrorKind> {
+        self.write_iter(address, bytes.into_iter().cloned()).await
     }
-
-    fn write_read<'a>(
+    async fn write_read<'a>(
         &'a mut self,
         address: A,
         bytes: &'a [u8],
         buffer: &'a mut [u8],
-    ) -> Self::WriteReadFuture<'a> {
-        async move {
-            let mut res = self.setup(address, false, false).await;
-            if res.is_ok() {
-                res = self.write(bytes.into_iter().cloned()).await;
-            }
-            if res.is_ok() {
-                res = self.setup(address, true, true).await;
-            }
-            if res.is_ok() {
-                res = self.read(buffer).await;
-            }
-            self.stop().await;
-            res
+    ) -> Result<(), ErrorKind> {
+        let mut res = self.setup(address, false, false).await;
+        if res.is_ok() {
+            res = self.write(bytes.into_iter().cloned()).await;
         }
+        if res.is_ok() {
+            res = self.setup(address, true, true).await;
+        }
+        if res.is_ok() {
+            res = self.read(buffer).await;
+        }
+        self.stop().await;
+        res
     }
-
-    fn transaction<'a, 'b>(
+    async fn transaction<'a, 'b>(
         &'a mut self,
         address: A,
         operations: &'a mut [Operation<'b>],
-    ) -> Self::TransactionFuture<'a, 'b> {
-        async move {
-            let mut first = true;
-            let mut res = Ok(());
-            for op in operations {
-                match op {
-                    Operation::Read(buf) => {
-                        res = self.setup(address, true, !first).await;
-                        if res.is_ok() {
-                            res = self.read(buf).await;
-                        }
-                    }
-                    Operation::Write(buffer) => {
-                        res = self.setup(address, false, !first).await;
-                        if res.is_ok() {
-                            res = self.write(buffer.into_iter().cloned()).await;
-                        }
+    ) -> Result<(), ErrorKind> {
+        let mut first = true;
+        let mut res = Ok(());
+        for op in operations {
+            match op {
+                Operation::Read(buf) => {
+                    res = self.setup(address, true, !first).await;
+                    if res.is_ok() {
+                        res = self.read(buf).await;
                     }
                 }
-                if res.is_err() {
-                    break;
+                Operation::Write(buffer) => {
+                    res = self.setup(address, false, !first).await;
+                    if res.is_ok() {
+                        res = self.write(buffer.into_iter().cloned()).await;
+                    }
                 }
-                first = false;
             }
-            self.stop().await;
-            res
+            if res.is_err() {
+                break;
+            }
+            first = false;
         }
+        self.stop().await;
+        res
     }
 }

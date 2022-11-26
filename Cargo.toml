@@ -10,7 +10,7 @@ authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 [dependencies]
 rp2040-hal = { version = "0.6.0", features = ["eh1_0_alpha"] }
 embedded-hal = { version = "=1.0.0-alpha.9" }
-embedded-hal-async = "0.1.0-alpha.2"
+embedded-hal-async = "0.2.0-alpha.0"
 fugit = "0.3.6"
 pio = { version = "0.2", optional = true }
 pio-proc = { version = "0.2", optional = true }
@@ -32,7 +32,5 @@ required-features = ["pio"]
 pio = ["dep:pio", "dep:pio-proc"]
 
 [patch.crates-io]
-embedded-hal = { git = "https://github.com/rust-embedded/embedded-hal" }
-embedded-hal-async = { git = "https://github.com/rust-embedded/embedded-hal" }
-rp2040-hal = { git = "https://github.com/ithinuel/rp-hal", branch = "develop" }
-rp-pico = { git = "https://github.com/ithinuel/rp-hal", branch = "develop" }
+rp2040-hal = { git = "https://github.com/rp-rs/rp-hal" }
+rp-pico = { git = "https://github.com/rp-rs/rp-hal" }

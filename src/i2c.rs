@@ -1,8 +1,4 @@
-use core::{
-    future::{self, Future},
-    ops::Deref,
-    task::Poll,
-};
+use core::{future, ops::Deref, task::Poll};
 
 use embedded_hal_async::i2c::{AddressMode, Operation};
 use fugit::HertzU32;
@@ -482,91 +478,69 @@ where
     B: Deref<Target = RegisterBlock>,
     A: AddressMode + 'static + Into<u16>,
 {
-    type WriteFuture<'a>
-    = impl Future<Output = Result<(), Error>> + 'a where
-        Self: 'a ;
-
-    type ReadFuture<'a> = impl Future<Output = Result<(), Error>> + 'a
-    where
-        Self: 'a;
-
-    type WriteReadFuture<'a> = impl Future<Output = Result<(), Error>> + 'a
-    where
-        Self: 'a;
-
-    type TransactionFuture<'a, 'b> = impl Future<Output = Result<(), Error>> + 'a
-        where Self: 'a, 'b: 'a;
-
-    fn read<'a>(&'a mut self, address: A, buffer: &'a mut [u8]) -> Self::ReadFuture<'a> {
+    async fn read<'a>(&'a mut self, address: A, buffer: &'a mut [u8]) -> Result<(), Error> {
         let addr: u16 = address.into();
 
-        async move {
-            Self::validate(addr, None, Some(buffer.is_empty()))?;
-            self.setup(addr);
-            self.non_blocking_read_internal(buffer, true).await
-        }
+        Self::validate(addr, None, Some(buffer.is_empty()))?;
+        self.setup(addr);
+        self.non_blocking_read_internal(buffer, true).await
+    }
+    async fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Result<(), Error> {
+        self.write_iter(address, bytes.into_iter().cloned()).await
     }
 
-    fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Self::WriteFuture<'a> {
-        self.write_iter(address, bytes.into_iter().cloned())
-    }
-
-    fn write_read<'a>(
+    async fn write_read<'a>(
         &'a mut self,
         address: A,
         bytes: &'a [u8],
         buffer: &'a mut [u8],
-    ) -> Self::WriteReadFuture<'a> {
+    ) -> Result<(), Error> {
         let addr: u16 = address.into();
 
-        async move {
-            Self::validate(addr, Some(bytes.is_empty()), Some(buffer.is_empty()))?;
-            self.setup(addr);
-            self.non_blocking_write_internal(bytes.iter().cloned(), false)
-                .await?;
-            self.non_blocking_read_internal(buffer, true).await
-        }
+        Self::validate(addr, Some(bytes.is_empty()), Some(buffer.is_empty()))?;
+        self.setup(addr);
+        self.non_blocking_write_internal(bytes.iter().cloned(), false)
+            .await?;
+        self.non_blocking_read_internal(buffer, true).await
     }
 
-    fn transaction<'a, 'b>(
+    async fn transaction<'a, 'b>(
         &'a mut self,
         address: A,
         operations: &'a mut [Operation<'b>],
-    ) -> Self::TransactionFuture<'a, 'b> {
+    ) -> Result<(), Error> {
         let addr: u16 = address.into();
 
-        async move {
-            let mut res = Ok(());
-            let mut iterator = operations.iter_mut();
-            while let Some(op) = iterator.next() {
-                match op {
-                    Operation::Read(buffer) => {
-                        res = Self::validate(addr, None, Some(buffer.is_empty()));
-                        if res.is_ok() {
-                            self.setup(addr);
-                            res = self
-                                .non_blocking_read_internal(buffer, iterator.len() == 0)
-                                .await;
-                        }
-                    }
-                    Operation::Write(buffer) => {
-                        res = Self::validate(addr, Some(buffer.is_empty()), None);
-                        if res.is_ok() {
-                            self.setup(addr);
-                            res = self
-                                .non_blocking_write_internal(
-                                    buffer.into_iter().cloned(),
-                                    iterator.len() == 0,
-                                )
-                                .await;
-                        }
+        let mut res = Ok(());
+        let mut iterator = operations.iter_mut();
+        while let Some(op) = iterator.next() {
+            match op {
+                Operation::Read(buffer) => {
+                    res = Self::validate(addr, None, Some(buffer.is_empty()));
+                    if res.is_ok() {
+                        self.setup(addr);
+                        res = self
+                            .non_blocking_read_internal(buffer, iterator.len() == 0)
+                            .await;
                     }
                 }
-                if res.is_err() {
-                    break;
+                Operation::Write(buffer) => {
+                    res = Self::validate(addr, Some(buffer.is_empty()), None);
+                    if res.is_ok() {
+                        self.setup(addr);
+                        res = self
+                            .non_blocking_write_internal(
+                                buffer.into_iter().cloned(),
+                                iterator.len() == 0,
+                            )
+                            .await;
+                    }
                 }
             }
-            res
+            if res.is_err() {
+                break;
+            }
         }
+        res
     }
 }
