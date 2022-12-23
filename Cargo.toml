@@ -8,7 +8,7 @@ authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rp2040-hal = { version = "0.6.0", features = ["eh1_0_alpha"] }
+rp2040-hal = { version = "0.7.0", features = ["eh1_0_alpha"] }
 embedded-hal = { version = "=1.0.0-alpha.9" }
 embedded-hal-async = "0.2.0-alpha.0"
 fugit = "0.3.6"
@@ -18,7 +18,7 @@ pio-proc = { version = "0.2", optional = true }
 [dev-dependencies]
 cortex-m-rt = "0.7.1"
 cortex-m = "0.7.6"
-rp-pico = { version = "0.5.0", features = ["rt"] }
+rp-pico = { version = "0.6.0", features = ["rt"] }
 defmt = "0.3.2"
 defmt-rtt = "0.3.2"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
@@ -33,4 +33,4 @@ pio = ["dep:pio", "dep:pio-proc"]
 
 [patch.crates-io]
 rp2040-hal = { git = "https://github.com/rp-rs/rp-hal" }
-rp-pico = { git = "https://github.com/rp-rs/rp-hal" }
+rp-pico = { git = "https://github.com/rp-rs/rp-hal-boards" }
