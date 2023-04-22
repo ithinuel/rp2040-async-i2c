@@ -3,8 +3,8 @@ use core::{future, ops::Deref, task::Poll};
 use embedded_hal_async::i2c::{AddressMode, Operation};
 use fugit::HertzU32;
 use rp2040_hal::{
-    gpio::{bank0::BankPinId, FunctionI2C, Pin, PinId},
-    i2c::{Error, SclPin, SdaPin},
+    gpio::{AnyPin, FunctionI2C},
+    i2c::{Error, ValidSclPin, ValidSdaPin},
     pac::{self, i2c0::RegisterBlock, RESETS},
 };
 
@@ -50,24 +50,24 @@ where
 {
     type Error = Error;
 }
-impl<B, Sda, Scl> I2C<B, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+impl<B, Sda, Scl> I2C<B, (Sda, Scl)>
 where
     B: SubSystemReset + Deref<Target = RegisterBlock>,
-    Sda: PinId + BankPinId,
-    Scl: PinId + BankPinId,
+    Sda: AnyPin<Function = FunctionI2C>,
+    Scl: AnyPin<Function = FunctionI2C>,
 {
     /// Configures the I2C peripheral to work in controller mode
     pub fn new(
         i2c: B,
-        sda_pin: Pin<Sda, FunctionI2C>,
-        scl_pin: Pin<Scl, FunctionI2C>,
+        sda_pin: Sda,
+        scl_pin: Scl,
         freq: HertzU32,
         resets: &mut RESETS,
         system_clock: HertzU32,
     ) -> Self
     where
-        Sda: SdaPin<B>,
-        Scl: SclPin<B>,
+        Sda::Id: ValidSdaPin<B>,
+        Scl::Id: ValidSclPin<B>,
     {
         let freq = freq.to_Hz();
         assert!(freq <= 1_000_000);
@@ -148,15 +148,13 @@ where
         }
     }
 }
-impl<B, Sda, Scl> I2C<B, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)>
+impl<B, Sda, Scl> I2C<B, (Sda, Scl)>
 where
-    B: SubSystemReset + Deref<Target = RegisterBlock>,
-    Sda: PinId + BankPinId,
-    Scl: PinId + BankPinId,
+    B: SubSystemReset,
 {
     /// Releases the I2C peripheral and associated pins
     #[allow(clippy::type_complexity)]
-    pub fn free(self, resets: &mut RESETS) -> (B, (Pin<Sda, FunctionI2C>, Pin<Scl, FunctionI2C>)) {
+    pub fn free(self, resets: &mut RESETS) -> (B, (Sda, Scl)) {
         self.i2c.reset_bring_down(resets);
 
         (self.i2c, self.pins)
@@ -486,7 +484,7 @@ where
         self.non_blocking_read_internal(buffer, true).await
     }
     async fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Result<(), Error> {
-        self.write_iter(address, bytes.into_iter().cloned()).await
+        self.write_iter(address, bytes.iter().cloned()).await
     }
 
     async fn write_read<'a>(
@@ -530,7 +528,7 @@ where
                         self.setup(addr);
                         res = self
                             .non_blocking_write_internal(
-                                buffer.into_iter().cloned(),
+                                buffer.iter().cloned(),
                                 iterator.len() == 0,
                             )
                             .await;

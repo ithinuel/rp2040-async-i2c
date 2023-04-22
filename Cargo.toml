@@ -9,8 +9,8 @@ authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 
 [dependencies]
 rp2040-hal = { version = "0.8.0", features = ["eh1_0_alpha"] }
-embedded-hal = { version = "=1.0.0-alpha.9" }
-embedded-hal-async = "0.2.0-alpha.0"
+embedded-hal = { version = "=1.0.0-alpha.10" }
+embedded-hal-async = "0.2.0-alpha.1"
 fugit = "0.3.6"
 pio = { version = "0.2", optional = true }
 pio-proc = { version = "0.2", optional = true }
@@ -18,7 +18,7 @@ pio-proc = { version = "0.2", optional = true }
 [dev-dependencies]
 cortex-m-rt = "0.7.1"
 cortex-m = "0.7.6"
-rp-pico = { version = "0.6.0", features = ["rt"] }
+rp-pico = { version = "0.7.0", features = ["rt"] }
 defmt = "0.3.2"
 defmt-rtt = "0.3.2"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
