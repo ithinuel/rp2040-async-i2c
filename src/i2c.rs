@@ -4,7 +4,7 @@ use embedded_hal_async::i2c::{AddressMode, Operation};
 use fugit::HertzU32;
 use rp2040_hal::{
     gpio::{AnyPin, FunctionI2C},
-    i2c::{Error, ValidSclPin, ValidSdaPin},
+    i2c::Error,
     pac::{self, i2c0::RegisterBlock, RESETS},
 };
 
@@ -64,11 +64,7 @@ where
         freq: HertzU32,
         resets: &mut RESETS,
         system_clock: HertzU32,
-    ) -> Self
-    where
-        Sda::Id: ValidSdaPin<B>,
-        Scl::Id: ValidSclPin<B>,
-    {
+    ) -> Self {
         let freq = freq.to_Hz();
         assert!(freq <= 1_000_000);
         assert!(freq > 0);
@@ -476,22 +472,22 @@ where
     B: Deref<Target = RegisterBlock>,
     A: AddressMode + 'static + Into<u16>,
 {
-    async fn read<'a>(&'a mut self, address: A, buffer: &'a mut [u8]) -> Result<(), Error> {
+    async fn read(&mut self, address: A, buffer: &mut [u8]) -> Result<(), Error> {
         let addr: u16 = address.into();
 
         Self::validate(addr, None, Some(buffer.is_empty()))?;
         self.setup(addr);
         self.non_blocking_read_internal(buffer, true).await
     }
-    async fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Result<(), Error> {
+    async fn write(&mut self, address: A, bytes: &[u8]) -> Result<(), Error> {
         self.write_iter(address, bytes.iter().cloned()).await
     }
 
-    async fn write_read<'a>(
-        &'a mut self,
+    async fn write_read(
+        &mut self,
         address: A,
-        bytes: &'a [u8],
-        buffer: &'a mut [u8],
+        bytes: &[u8],
+        buffer: &mut [u8],
     ) -> Result<(), Error> {
         let addr: u16 = address.into();
 
@@ -502,10 +498,10 @@ where
         self.non_blocking_read_internal(buffer, true).await
     }
 
-    async fn transaction<'a, 'b>(
-        &'a mut self,
+    async fn transaction(
+        &mut self,
         address: A,
-        operations: &'a mut [Operation<'b>],
+        operations: &mut [Operation<'_>],
     ) -> Result<(), Error> {
         let addr: u16 = address.into();
 

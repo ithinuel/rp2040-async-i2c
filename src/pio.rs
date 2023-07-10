@@ -555,7 +555,7 @@ where
     SCL: AnyPin,
     A: AddressMode + Into<u16> + Copy + 'static,
 {
-    async fn read<'a>(&'a mut self, address: A, buffer: &'a mut [u8]) -> Result<(), ErrorKind> {
+    async fn read(&mut self, address: A, buffer: &mut [u8]) -> Result<(), ErrorKind> {
         let mut res = self.setup(address, true, false).await;
         if res.is_ok() {
             res = self.read(buffer).await;
@@ -564,14 +564,14 @@ where
         res
     }
 
-    async fn write<'a>(&'a mut self, address: A, bytes: &'a [u8]) -> Result<(), ErrorKind> {
+    async fn write(&mut self, address: A, bytes: &[u8]) -> Result<(), ErrorKind> {
         self.write_iter(address, bytes.iter().cloned()).await
     }
-    async fn write_read<'a>(
-        &'a mut self,
+    async fn write_read(
+        &mut self,
         address: A,
-        bytes: &'a [u8],
-        buffer: &'a mut [u8],
+        bytes: &[u8],
+        buffer: &mut [u8],
     ) -> Result<(), ErrorKind> {
         let mut res = self.setup(address, false, false).await;
         if res.is_ok() {
@@ -586,10 +586,10 @@ where
         self.stop().await;
         res
     }
-    async fn transaction<'a, 'b>(
-        &'a mut self,
+    async fn transaction(
+        &mut self,
         address: A,
-        operations: &'a mut [Operation<'b>],
+        operations: &mut [Operation<'_>],
     ) -> Result<(), ErrorKind> {
         let mut first = true;
         let mut res = Ok(());
