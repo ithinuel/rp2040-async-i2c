@@ -8,9 +8,9 @@ authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rp2040-hal = { version = "0.9.0-alpha.1", features = ["eh1_0_alpha"] }
-embedded-hal = { version = "=1.0.0-alpha.11" }
-embedded-hal-async = "0.2.0-alpha.2"
+rp2040-hal = { version = "0.9.0", features = ["eh1_0_alpha"] }
+embedded-hal = { version = "=1.0.0-rc.1" }
+embedded-hal-async = "1.0.0-rc.1"
 fugit = "0.3.6"
 pio = { version = "0.2", optional = true }
 pio-proc = { version = "0.2", optional = true }
