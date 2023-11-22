@@ -16,6 +16,7 @@ use embedded_hal_async::i2c::{I2c, Operation};
 use fugit::RateExtU32;
 
 use defmt_rtt as _;
+use hal::gpio::PullUp;
 use panic_probe as _;
 
 use rp_pico::hal::{self, pac, Clock};
@@ -57,8 +58,8 @@ async fn demo() {
 
     let mut i2c = rp2040_async_i2c::i2c::I2C::new(
         pac.I2C0,
-        pins.gpio20.into_mode(),
-        pins.gpio21.into_mode(),
+        pins.gpio20.into_function().into_pull_type::<PullUp>(),
+        pins.gpio21.into_function().into_pull_type::<PullUp>(),
         100.kHz(),
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
