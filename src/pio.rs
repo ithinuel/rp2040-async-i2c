@@ -617,3 +617,49 @@ where
         res
     }
 }
+impl<'pio, P, SMI, SDA, SCL, A> i2c_write_iter::non_blocking::WriteIter<A> for I2C<'pio, P, SMI, SDA, SCL>
+where
+    P: PIOExt,
+    SMI: StateMachineIndex,
+    SDA: AnyPin,
+    SCL: AnyPin,
+    A: AddressMode + Into<u16> + Copy + 'static,
+{
+    async fn write_iter<'a, U>(&'a mut self, address: A, bytes: U) -> Result<(), Self::Error>
+    where
+        U: IntoIterator<Item = u8> + 'a,
+    {
+        self.write_iter(address, bytes).await
+    }
+}
+impl<'pio, P, SMI, SDA, SCL, A> i2c_write_iter::non_blocking::WriteIterRead<A> for I2C<'pio, P, SMI, SDA, SCL>
+where
+    P: PIOExt,
+    SMI: StateMachineIndex,
+    SDA: AnyPin,
+    SCL: AnyPin,
+    A: AddressMode + Into<u16> + Copy + 'static,
+{
+    async fn write_iter_read<'a, U>(
+        &'a mut self,
+        address: A,
+        bytes: U,
+        read: &mut [u8],
+    ) -> Result<(), Self::Error>
+    where
+        U: IntoIterator<Item = u8> + 'a,
+    {
+        let mut res = self.setup(address, false, false).await;
+        if res.is_ok() {
+            res = self.write(bytes).await;
+        }
+        if res.is_ok() {
+            res = self.setup(address, true, true).await;
+        }
+        if res.is_ok() {
+            res = self.read(read).await;
+        }
+        self.stop().await;
+        res
+    }
+}

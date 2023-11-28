@@ -503,3 +503,38 @@ where
         res
     }
 }
+impl<B, P, A> i2c_write_iter::non_blocking::WriteIter<A> for I2C<B, P>
+where
+    B: Deref<Target = RegisterBlock>,
+    A: AddressMode + 'static + Into<u16>,
+{
+    async fn write_iter<'a, U>(&'a mut self, address: A, bytes: U) -> Result<(), Self::Error>
+    where
+        U: IntoIterator<Item = u8> + 'a,
+    {
+        self.write_iter(address, bytes).await
+    }
+}
+impl<B, P, A> i2c_write_iter::non_blocking::WriteIterRead<A> for I2C<B, P>
+where
+    B: Deref<Target = RegisterBlock>,
+    A: AddressMode + 'static + Into<u16>,
+{
+    async fn write_iter_read<'a, U>(
+        &'a mut self,
+        address: A,
+        bytes: U,
+        read: &mut [u8],
+    ) -> Result<(), Self::Error>
+    where
+        U: IntoIterator<Item = u8> + 'a,
+    {
+        let addr: u16 = address.into();
+        let mut bytes = bytes.into_iter().peekable();
+
+        Self::validate(addr, Some(bytes.peek().is_none()), None)?;
+        self.setup(addr);
+        self.non_blocking_write_internal(bytes, false).await?;
+        self.non_blocking_read_internal(read, true).await
+    }
+}
