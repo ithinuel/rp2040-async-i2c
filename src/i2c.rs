@@ -157,25 +157,6 @@ where
     }
 }
 
-macro_rules! block_on {
-    ($me:ident, $is_ready:ident, $setup_flags:ident) => {
-        future::poll_fn(|cx| {
-            let r = $me.$is_ready();
-
-            if r.is_pending() {
-                if let Some(waker_setter) = $me.waker_setter {
-                    waker_setter(cx.waker().clone());
-                    $me.$setup_flags();
-                } else {
-                    // always ready to scan
-                    cx.waker().wake_by_ref();
-                }
-            }
-            r
-        })
-    };
-}
-
 impl<B, P> I2C<B, P>
 where
     B: Deref<Target = RegisterBlock>,
@@ -349,7 +330,7 @@ where
                 queued += 1;
             }
 
-            if let Err(reason) = block_on!(self, check_rx_ready, clear_rx_flags).await {
+            if let Err(reason) = block_on!(self, check_rx_ready(), clear_rx_flags()).await {
                 abort_reason = Some(reason);
                 break;
             }
@@ -359,7 +340,7 @@ where
         }
 
         // wait for stop condition to be emitted.
-        block_on!(self, check_stop_deteced, clear_rx_flags).await;
+        block_on!(self, check_stop_deteced(), clear_rx_flags()).await;
         self.i2c.ic_clr_stop_det.read().clr_stop_det();
 
         if let Some(abort_reason) = abort_reason {
@@ -378,7 +359,7 @@ where
         while let Some(byte) = bytes.next() {
             if self.tx_fifo_full() {
                 // wait a bit
-                if let Err(reason) = block_on!(self, check_tx_ready, clear_tx_flags).await {
+                if let Err(reason) = block_on!(self, check_tx_ready(), clear_tx_flags()).await {
                     abort_reason = Some(reason);
                     break;
                 };
@@ -397,14 +378,14 @@ where
         }
         if abort_reason.is_none() {
             // wait for the tx_fifo to be emptied
-            block_on!(self, check_tx_completed, clear_tx_flags).await;
+            block_on!(self, check_tx_completed(), clear_tx_flags()).await;
             abort_reason = self.read_and_clear_abort_reason();
         }
 
         if abort_reason.is_some() || do_stop {
             // If the transaction was aborted or if it completed
             // successfully wait until the STOP condition has occured.
-            block_on!(self, check_stop_deteced, clear_tx_flags).await;
+            block_on!(self, check_stop_deteced(), clear_tx_flags()).await;
             self.i2c.ic_clr_stop_det.read().clr_stop_det();
         }
 

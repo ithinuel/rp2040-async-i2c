@@ -255,67 +255,77 @@ where
         self.waker_setter = Some(waker_setter);
     }
 
-    /// Calls `f` to check if we are ready or not.
-    /// If not, `g` is called once the waker is set (to eg enable the required interrupts).
-    async fn block_on<F, U, G>(&mut self, mut f: F, mut g: G) -> U
-    where
-        F: FnMut(&mut Self) -> Poll<U>,
-        G: FnMut(&mut Self),
-    {
-        future::poll_fn(|cx| {
-            let r = f(self);
-
-            if r.is_pending() {
-                if let Some(waker_setter) = self.waker_setter {
-                    waker_setter(cx.waker().clone());
-                    g(self);
-                } else {
-                    // always ready to scan
-                    cx.waker().wake_by_ref();
-                }
-            }
-            r
-        })
-        .await
-    }
-
     fn has_errored(&self) -> bool {
         self.pio.get_irq_raw() & (1 << SMI::id()) != 0
+    }
+
+    fn rx_purge(&mut self) -> Poll<()> {
+        if self.rx.read().is_some() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+    fn write_data(&mut self, data: u16) -> Poll<()> {
+        if self.tx.write_u16_replicated(data) {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+    fn address_sent(&mut self, mut address_len: usize) -> Poll<()> {
+        while address_len > 0 && self.rx.read().is_some() {
+            address_len -= 1;
+        }
+
+        if self.has_errored() || address_len == 0 {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+    fn tx_not_full(&mut self, iter_len: usize) -> Poll<()> {
+        if self.has_errored() || (iter_len > 0 && !self.tx.is_full()) || !self.rx.is_empty() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+    fn data_sent(&mut self, mut queued: usize) -> Poll<()> {
+        if self.rx.read().is_some() {
+            queued -= 1;
+        }
+        if queued == 0 || self.has_errored() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+    fn enable_rx_not_empty(&self) {
+        self.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
+        self.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
+    }
+    fn enable_tx_not_full(&self) {
+        self.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
+        self.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
+    }
+    fn enable_rx_not_empty_and_tx_not_full_data_to_send(&self, iter_len: usize) {
+        if iter_len > 0 {
+            self.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
+        }
+        self.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
+        self.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
     }
 
     async fn resume_after_error(&mut self) {
         self.sm.drain_tx_fifo();
         self.pio.clear_irq(1 << SMI::id());
 
-        self.block_on(
-            |me| {
-                if me.rx.read().is_some() {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            },
-            |me| {
-                me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-            },
-        )
-        .await;
+        block_on!(self, rx_purge(), enable_rx_not_empty()).await;
     }
 
     async fn put(&mut self, data: u16) {
-        self.block_on(
-            |me| {
-                if me.tx.write_u16_replicated(data) {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            },
-            |me| {
-                me.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
-            },
-        )
-        .await;
+        block_on!(self, write_data(data), enable_tx_not_full()).await;
     }
 
     async fn put_data(&mut self, data: u8, read_ack: bool, last: bool) {
@@ -381,7 +391,7 @@ where
         // send address
         use core::any::TypeId;
         let a_tid = TypeId::of::<A>();
-        let mut address_len: u32 = if TypeId::of::<SevenBitAddress>() == a_tid {
+        let address_len: usize = if TypeId::of::<SevenBitAddress>() == a_tid {
             let addr = (address << 1) | read_flag;
             self.put_data(addr as u8, true, false).await;
             1
@@ -395,24 +405,7 @@ where
             panic!("Unsupported address type.");
         };
 
-        self.block_on(
-            |me| {
-                while address_len > 0 && me.rx.read().is_some() {
-                    address_len -= 1;
-                }
-
-                if me.has_errored() || address_len == 0 {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            },
-            |me| {
-                me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
-            },
-        )
-        .await;
+        block_on!(self, address_sent(address_len), enable_rx_not_empty()).await;
 
         if self.has_errored() {
             Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address))
@@ -446,24 +439,10 @@ where
                     *data = (byte & 0xFF) as u8;
                 }
             } else {
-                self.block_on(
-                    |me| {
-                        if me.has_errored()
-                            || (iter.len() > 0 && !me.tx.is_full())
-                            || !me.rx.is_empty()
-                        {
-                            Poll::Ready(())
-                        } else {
-                            Poll::Pending
-                        }
-                    },
-                    |me| {
-                        if iter.len() > 0 {
-                            me.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
-                        }
-                        me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
-                        me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-                    },
+                block_on!(
+                    self,
+                    tx_not_full(iter.len()),
+                    enable_rx_not_empty_and_tx_not_full_data_to_send(iter.len())
                 )
                 .await;
             }
@@ -498,23 +477,7 @@ where
             queued += 1;
         }
 
-        self.block_on(
-            |me| {
-                if me.rx.read().is_some() {
-                    queued -= 1;
-                }
-                if queued == 0 || me.has_errored() {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            },
-            |me| {
-                me.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
-                me.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
-            },
-        )
-        .await;
+        block_on!(self, data_sent(queued), enable_rx_not_empty()).await;
 
         if self.has_errored() {
             Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data))
@@ -617,7 +580,8 @@ where
         res
     }
 }
-impl<'pio, P, SMI, SDA, SCL, A> i2c_write_iter::non_blocking::WriteIter<A> for I2C<'pio, P, SMI, SDA, SCL>
+impl<'pio, P, SMI, SDA, SCL, A> i2c_write_iter::non_blocking::WriteIter<A>
+    for I2C<'pio, P, SMI, SDA, SCL>
 where
     P: PIOExt,
     SMI: StateMachineIndex,
@@ -632,7 +596,8 @@ where
         self.write_iter(address, bytes).await
     }
 }
-impl<'pio, P, SMI, SDA, SCL, A> i2c_write_iter::non_blocking::WriteIterRead<A> for I2C<'pio, P, SMI, SDA, SCL>
+impl<'pio, P, SMI, SDA, SCL, A> i2c_write_iter::non_blocking::WriteIterRead<A>
+    for I2C<'pio, P, SMI, SDA, SCL>
 where
     P: PIOExt,
     SMI: StateMachineIndex,
