@@ -32,7 +32,7 @@ jobs:
       - name: Clean
         run: cargo clean
       - name: Check unused deps
-        uses: aig787/cargo-udeps-action@v1
+        uses: ithinuel/cargo-udeps-action@v1.1
         with:
           version: latest
           args: ${{ matrix.mode }} --workspace ${{ env.features }}
