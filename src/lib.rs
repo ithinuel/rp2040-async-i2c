@@ -192,7 +192,7 @@ where
         let frac: u8 = frac as u8;
 
         // init
-        let (mut sm, rx, tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+        let (mut sm, rx, tx) = rp2040_hal::pio::PIOBuilder::from_installed_program(installed)
             // use both RX & TX FIFO
             .buffers(rp2040_hal::pio::Buffers::RxTx)
             // Pin configuration

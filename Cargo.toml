@@ -8,7 +8,7 @@ authors = ["Wilfried Chauveau <wilfried.chauveau@ithinuel.me>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rp2040-hal = { version = "0.9.2" }
+rp2040-hal = { version = "0.10.2" }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 i2c-write-iter = { version = "1.0.0", features = ["async"] }
