@@ -17,6 +17,8 @@ use rp2040_hal::{
     },
 };
 
+mod utils;
+
 macro_rules! block_on {
     ($me:ident, $is_ready:ident ($($arg:expr),*), $setup_flags:ident ($($arg2:expr),*)) => {
         future::poll_fn(|cx| {
@@ -296,15 +298,10 @@ where
             Poll::Pending
         }
     }
-    fn address_sent(&mut self, mut address_len: usize) -> Poll<()> {
-        while address_len > 0 && self.rx.read().is_some() {
+    async fn address_sent(&mut self, mut address_len: usize) {
+        while address_len > 0 {
+            self.rx.async_read(PioIRQ::Irq0).await;
             address_len -= 1;
-        }
-
-        if self.has_errored() || address_len == 0 {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
         }
     }
     fn tx_not_full(&mut self, iter_len: usize) -> Poll<()> {
@@ -328,10 +325,6 @@ where
         self.rx.enable_rx_not_empty_interrupt(PioIRQ::Irq0);
         self.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
     }
-    fn enable_tx_not_full(&self) {
-        self.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
-        self.pio.irq0().enable_sm_interrupt(SMI::id() as u8);
-    }
     fn enable_rx_not_empty_and_tx_not_full_data_to_send(&self, iter_len: usize) {
         if iter_len > 0 {
             self.tx.enable_tx_not_full_interrupt(PioIRQ::Irq0);
@@ -348,7 +341,7 @@ where
     }
 
     async fn put(&mut self, data: u16) {
-        block_on!(self, write_data(data), enable_tx_not_full()).await;
+        self.tx.async_write_u16_replicated(PioIRQ::Irq0, data).await;
     }
 
     async fn put_data(&mut self, data: u8, read_ack: bool, last: bool) {
@@ -427,8 +420,13 @@ where
         } else {
             panic!("Unsupported address type.");
         };
-
-        block_on!(self, address_sent(address_len), enable_rx_not_empty()).await;
+        defmt::trace!("setup start");
+        // futures::select!(
+        //  _ => all data sent,
+        //  _ => irq raised (error)
+        // )
+        self.address_sent(address_len).await;
+        defmt::trace!("setup done");
 
         if self.has_errored() {
             Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address))
@@ -489,6 +487,7 @@ where
             self.rx.is_empty()
         );
 
+        defmt::trace!("Write start");
         let mut queued = 0;
         let mut iter = buffer.into_iter().peekable();
         while let (Some(byte), false) = (iter.next(), self.has_errored()) {
@@ -496,11 +495,14 @@ where
             if self.rx.read().is_some() {
                 queued -= 1;
             }
+            defmt::trace!("Write putting data.");
             self.put_data(byte, true, iter.peek().is_none()).await;
             queued += 1;
         }
 
+        defmt::trace!("Waiting for completion");
         block_on!(self, data_sent(queued), enable_rx_not_empty()).await;
+        defmt::trace!("Write done");
 
         if self.has_errored() {
             Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data))
